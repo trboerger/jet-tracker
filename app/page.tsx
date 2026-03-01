@@ -27,6 +27,7 @@ interface ApiResponse {
   totalTracked: number;
   visible: number;
   source?: string;
+  error?: string;
 }
 
 // Fetch from our own API (no CORS issues - runs server-side)
