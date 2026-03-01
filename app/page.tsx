@@ -7,7 +7,6 @@ import AircraftCard from '@/components/AircraftCard';
 import StatsPanel from '@/components/StatsPanel';
 import FilterTabs from '@/components/FilterTabs';
 import { AircraftWithDetails, Aircraft } from '@/types/aircraft';
-import { trackedJets, jetLookup } from '@/lib/aircraft-data';
 import { RefreshCw, AlertCircle } from 'lucide-react';
 
 // Dynamic import for Map to avoid SSR issues with Leaflet
@@ -22,81 +21,23 @@ const Map = dynamic(() => import('@/components/Map'), {
 
 type Category = 'all' | 'tech' | 'business' | 'political' | 'government';
 
-// OpenSky API fetch with CORS proxy
-async function fetchOpenSkyData(icao24List: string[]): Promise<Aircraft[]> {
-  // Create a set for faster lookups
-  const icaoSet = new Set(icao24List.map(i => i.toLowerCase()));
+interface ApiResponse {
+  aircraft: AircraftWithDetails[];
+  timestamp: number;
+  totalTracked: number;
+  visible: number;
+  source?: string;
+}
+
+// Fetch from our own API (no CORS issues - runs server-side)
+async function fetchAircraftData(category: string): Promise<ApiResponse> {
+  const response = await fetch(`/api/aircraft?category=${category}`);
   
-  // Try fetching all states and filter client-side (shorter URL)
-  const targetUrl = 'https://opensky-network.org/api/states/all';
-  
-  // Try multiple CORS proxies
-  const corsProxies = [
-    `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`,
-    `https://api.codetabs.com/v1/proxy?quest=${targetUrl}`,
-  ];
-  
-  for (const proxyUrl of corsProxies) {
-    try {
-      console.log('Trying proxy:', proxyUrl);
-      const response = await fetch(proxyUrl);
-      
-      if (!response.ok) {
-        console.warn(`Proxy failed with status: ${response.status}`);
-        continue;
-      }
-      
-      let data;
-      
-      // Handle different proxy response formats
-      if (proxyUrl.includes('allorigins.win')) {
-        const wrapped = await response.json();
-        if (!wrapped.contents) {
-          console.warn('AllOrigins: no contents');
-          continue;
-        }
-        data = JSON.parse(wrapped.contents);
-      } else {
-        data = await response.json();
-      }
-      
-      if (!data.states || !Array.isArray(data.states)) {
-        console.warn('OpenSky returned no states');
-        return [];
-      }
-      
-      console.log(`OpenSky returned ${data.states.length} total aircraft`);
-      
-      // Filter to our tracked aircraft
-      const filtered = data.states.filter((state: any[]) => 
-        icaoSet.has(state[0].toLowerCase())
-      );
-      
-      console.log(`Found ${filtered.length} tracked aircraft`);
-      
-      return filtered.map((state: any[]) => ({
-        icao24: state[0],
-        callsign: state[1]?.trim() || null,
-        origin_country: state[2],
-        time_position: state[3],
-        last_contact: state[4],
-        longitude: state[5],
-        latitude: state[6],
-        baro_altitude: state[7],
-        on_ground: state[8],
-        velocity: state[9],
-        true_track: state[10],
-        vertical_rate: state[11],
-        geo_altitude: state[13],
-        squawk: state[14],
-      }));
-    } catch (error) {
-      console.warn(`Proxy error:`, error);
-      continue;
-    }
+  if (!response.ok) {
+    throw new Error(`API error: ${response.status}`);
   }
   
-  throw new Error('All CORS proxies failed');
+  return response.json();
 }
 
 // Generate mock data for demonstration
@@ -137,51 +78,26 @@ export default function Home() {
   const [selectedIcao, setSelectedIcao] = useState<string | null>(null);
   const [useMockData, setUseMockData] = useState(false);
 
-  const jetsToTrack = useMemo(() => {
-    if (selectedCategory === 'all') return trackedJets;
-    return trackedJets.filter(jet => jet.category === selectedCategory);
-  }, [selectedCategory]);
-
-  const totalTracked = jetsToTrack.length;
+  const [totalTracked, setTotalTracked] = useState(0);
 
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
       
-      const icao24List = jetsToTrack.map(jet => jet.icao24.toLowerCase());
-      let aircraftData: Aircraft[];
+      const data = await fetchAircraftData(selectedCategory);
       
-      if (useMockData) {
-        aircraftData = generateMockData(icao24List);
-      } else {
-        aircraftData = await fetchOpenSkyData(icao24List);
-        if (aircraftData.length === 0) {
-          setUseMockData(true);
-          aircraftData = generateMockData(icao24List);
-        }
-      }
-      
-      // Merge with jet info
-      const enrichedData: AircraftWithDetails[] = aircraftData
-        .map(ac => {
-          const jetInfo = jetLookup.get(ac.icao24.toLowerCase());
-          if (!jetInfo) return null;
-          return { ...ac, jetInfo };
-        })
-        .filter((ac): ac is AircraftWithDetails => ac !== null);
-      
-      setAircraft(enrichedData);
-      setLastUpdate(new Date());
+      setAircraft(data.aircraft);
+      setTotalTracked(data.totalTracked);
+      setLastUpdate(new Date(data.timestamp));
       setError(null);
+      setUseMockData(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
-      if (!useMockData) {
-        setUseMockData(true);
-      }
+      setUseMockData(true);
     } finally {
       setLoading(false);
     }
-  }, [jetsToTrack, useMockData]);
+  }, [selectedCategory]);
 
   // Initial fetch and interval
   useEffect(() => {
