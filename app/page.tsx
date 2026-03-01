@@ -33,50 +33,68 @@ interface ApiResponse {
 // Fetch from OpenSky via CORS proxy
 async function fetchOpenSkyData(icao24List: string[]): Promise<Aircraft[]> {
   const icaoSet = new Set(icao24List.map(i => i.toLowerCase()));
-  
-  // Use a CORS proxy to fetch OpenSky data
   const targetUrl = 'https://opensky-network.org/api/states/all';
-  const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`;
   
-  const response = await fetch(proxyUrl);
+  // Try multiple CORS proxies
+  const proxies = [
+    `https://api.codetabs.com/v1/proxy?quest=${targetUrl}`,
+    `https://corsproxy.io/?${targetUrl}`,
+    `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`,
+  ];
   
-  if (!response.ok) {
-    throw new Error(`Proxy error: ${response.status}`);
+  let lastError;
+  
+  for (const proxyUrl of proxies) {
+    try {
+      const response = await fetch(proxyUrl, { 
+        cache: 'no-store',
+        headers: { 'Accept': 'application/json' }
+      });
+      
+      if (!response.ok) continue;
+      
+      let data;
+      
+      if (proxyUrl.includes('allorigins.win')) {
+        const wrapped = await response.json();
+        if (wrapped.contents === 'Too many requests') continue;
+        data = JSON.parse(wrapped.contents);
+      } else {
+        data = await response.json();
+      }
+      
+      if (!data.states || !Array.isArray(data.states)) {
+        continue;
+      }
+      
+      // Filter to tracked aircraft
+      const filtered = data.states.filter((state: any[]) => 
+        icaoSet.has(state[0].toLowerCase())
+      );
+      
+      return filtered.map((state: any[]) => ({
+        icao24: state[0],
+        callsign: state[1]?.trim() || null,
+        origin_country: state[2],
+        time_position: state[3],
+        last_contact: state[4],
+        longitude: state[5],
+        latitude: state[6],
+        baro_altitude: state[7],
+        on_ground: state[8],
+        velocity: state[9],
+        true_track: state[10],
+        vertical_rate: state[11],
+        geo_altitude: state[13],
+        squawk: state[14],
+      }));
+    } catch (err) {
+      lastError = err;
+      continue;
+    }
   }
   
-  const wrapped = await response.json();
-  
-  if (!wrapped.contents) {
-    throw new Error('Empty response from proxy');
-  }
-  
-  const data = JSON.parse(wrapped.contents);
-  
-  if (!data.states || !Array.isArray(data.states)) {
-    return [];
-  }
-  
-  // Filter to tracked aircraft
-  const filtered = data.states.filter((state: any[]) => 
-    icaoSet.has(state[0].toLowerCase())
-  );
-  
-  return filtered.map((state: any[]) => ({
-    icao24: state[0],
-    callsign: state[1]?.trim() || null,
-    origin_country: state[2],
-    time_position: state[3],
-    last_contact: state[4],
-    longitude: state[5],
-    latitude: state[6],
-    baro_altitude: state[7],
-    on_ground: state[8],
-    velocity: state[9],
-    true_track: state[10],
-    vertical_rate: state[11],
-    geo_altitude: state[13],
-    squawk: state[14],
-  }));
+  throw lastError || new Error('All proxies failed');
 }
 
 // Generate mock data
