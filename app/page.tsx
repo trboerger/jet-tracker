@@ -10,7 +10,6 @@ import { AircraftWithDetails, Aircraft } from '@/types/aircraft';
 import { trackedJets, jetLookup } from '@/lib/aircraft-data';
 import { RefreshCw, AlertCircle } from 'lucide-react';
 
-// Dynamic import for Map to avoid SSR issues with Leaflet
 const Map = dynamic(() => import('@/components/Map'), {
   ssr: false,
   loading: () => (
@@ -22,90 +21,79 @@ const Map = dynamic(() => import('@/components/Map'), {
 
 type Category = 'all' | 'tech' | 'business' | 'political' | 'government';
 
-interface ApiResponse {
-  aircraft: AircraftWithDetails[];
-  timestamp: number;
-  totalTracked: number;
-  visible: number;
-  source?: string;
-}
+// Cloudflare Worker URL - replace with yours once deployed
+// Example: 'https://jet-tracker-api.yourname.workers.dev'
+const WORKER_URL = 'https://jet-tracker-api.yourname.workers.dev';
 
-// Fetch from OpenSky via CORS proxy
-async function fetchOpenSkyData(icao24List: string[]): Promise<Aircraft[]> {
+// Fetch from Cloudflare Worker
+async function fetchFromWorker(icao24List: string[]): Promise<Aircraft[]> {
   const icaoSet = new Set(icao24List.map(i => i.toLowerCase()));
-  const targetUrl = 'https://opensky-network.org/api/states/all';
   
-  // Try multiple CORS proxies
-  const proxies = [
-    `https://api.codetabs.com/v1/proxy?quest=${targetUrl}`,
-    `https://corsproxy.io/?${targetUrl}`,
-    `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`,
-  ];
+  const response = await fetch(WORKER_URL, {
+    cache: 'no-store',
+    headers: { 'Accept': 'application/json' }
+  });
   
-  let lastError;
-  
-  for (const proxyUrl of proxies) {
-    try {
-      const response = await fetch(proxyUrl, { 
-        cache: 'no-store',
-        headers: { 'Accept': 'application/json' }
-      });
-      
-      if (!response.ok) continue;
-      
-      let data;
-      
-      if (proxyUrl.includes('allorigins.win')) {
-        const wrapped = await response.json();
-        if (wrapped.contents === 'Too many requests') continue;
-        data = JSON.parse(wrapped.contents);
-      } else {
-        data = await response.json();
-      }
-      
-      if (!data.states || !Array.isArray(data.states)) {
-        continue;
-      }
-      
-      // Filter to tracked aircraft
-      const filtered = data.states.filter((state: any[]) => 
-        icaoSet.has(state[0].toLowerCase())
-      );
-      
-      return filtered.map((state: any[]) => ({
-        icao24: state[0],
-        callsign: state[1]?.trim() || null,
-        origin_country: state[2],
-        time_position: state[3],
-        last_contact: state[4],
-        longitude: state[5],
-        latitude: state[6],
-        baro_altitude: state[7],
-        on_ground: state[8],
-        velocity: state[9],
-        true_track: state[10],
-        vertical_rate: state[11],
-        geo_altitude: state[13],
-        squawk: state[14],
-      }));
-    } catch (err) {
-      lastError = err;
-      continue;
-    }
+  if (!response.ok) {
+    throw new Error(`Worker error: ${response.status}`);
   }
   
-  throw lastError || new Error('All proxies failed');
+  const data = await response.json();
+  
+  if (data.error) {
+    throw new Error(data.error);
+  }
+  
+  if (!data.states || !Array.isArray(data.states)) {
+    return [];
+  }
+  
+  // Filter to tracked aircraft
+  const filtered = data.states.filter((state: any[]) => 
+    icaoSet.has(state[0].toLowerCase())
+  );
+  
+  return filtered.map((state: any[]) => ({
+    icao24: state[0],
+    callsign: state[1]?.trim() || null,
+    origin_country: state[2],
+    time_position: state[3],
+    last_contact: state[4],
+    longitude: state[5],
+    latitude: state[6],
+    baro_altitude: state[7],
+    on_ground: state[8],
+    velocity: state[9],
+    true_track: state[10],
+    vertical_rate: state[11],
+    geo_altitude: state[13],
+    squawk: state[14],
+  }));
 }
 
-// Generate mock data
+// Generate realistic mock data
 function generateMockData(icao24List: string[]): Aircraft[] {
   const now = Math.floor(Date.now() / 1000);
   
+  // More realistic positions (major airports and common routes)
+  const locations = [
+    { lat: 40.7128, lon: -74.0060 }, // NYC
+    { lat: 34.0522, lon: -118.2437 }, // LA
+    { lat: 51.5074, lon: -0.1278 }, // London
+    { lat: 48.8566, lon: 2.3522 }, // Paris
+    { lat: 35.6762, lon: 139.6503 }, // Tokyo
+    { lat: 25.7617, lon: -80.1918 }, // Miami
+    { lat: 39.7392, lon: -104.9903 }, // Denver
+    { lat: 41.9742, lon: -87.9073 }, // Chicago
+    { lat: 37.6213, lon: -122.3790 }, // SF
+    { lat: 30.2672, lon: -97.7431 }, // Austin
+  ];
+  
   return icao24List.map((icao24, index) => {
-    const baseLat = 30 + (index * 3) % 30;
-    const baseLon = -120 + (index * 5) % 60;
-    const lat = baseLat + Math.sin(now / 3600) * 5;
-    const lon = baseLon + Math.cos(now / 3600) * 5;
+    const loc = locations[index % locations.length];
+    // Add some randomness to position
+    const lat = loc.lat + (Math.random() - 0.5) * 4;
+    const lon = loc.lon + (Math.random() - 0.5) * 4;
     
     return {
       icao24: icao24.toLowerCase(),
@@ -115,12 +103,12 @@ function generateMockData(icao24List: string[]): Aircraft[] {
       last_contact: now,
       longitude: lon,
       latitude: lat,
-      baro_altitude: 35000 + (index * 500) % 10000,
-      on_ground: index % 5 === 0,
-      velocity: 400 + (index * 20) % 100,
-      true_track: (index * 45) % 360,
+      baro_altitude: 35000 + Math.random() * 10000,
+      on_ground: Math.random() > 0.8,
+      velocity: 400 + Math.random() * 100,
+      true_track: Math.random() * 360,
       vertical_rate: 0,
-      geo_altitude: 35500 + (index * 500) % 10000,
+      geo_altitude: 35500 + Math.random() * 10000,
       squawk: "1200",
     };
   });
@@ -151,15 +139,22 @@ export default function Home() {
       
       let aircraftData: Aircraft[];
       
-      try {
-        // Try to fetch real data
-        aircraftData = await fetchOpenSkyData(icao24List);
-        setUseMockData(false);
-      } catch (err) {
-        console.warn('OpenSky fetch failed, using mock data:', err);
+      // Only try worker if URL is configured
+      if (WORKER_URL.includes('yourname')) {
+        // Worker not set up yet - use mock data
         aircraftData = generateMockData(icao24List);
         setUseMockData(true);
-        setError('Live data unavailable - showing demo positions');
+        setError('Add your Cloudflare Worker URL to see live data (see setup guide below)');
+      } else {
+        try {
+          aircraftData = await fetchFromWorker(icao24List);
+          setUseMockData(false);
+        } catch (err) {
+          console.warn('Worker failed, using mock data:', err);
+          aircraftData = generateMockData(icao24List);
+          setUseMockData(true);
+          setError('Worker unavailable - showing demo positions');
+        }
       }
       
       // Merge with jet info
@@ -249,12 +244,48 @@ export default function Home() {
                 {error}
               </p>
             )}
+            
+            {/* Setup Guide */}
+            <div className="mt-3 ml-8 p-3 bg-jet-card rounded-lg border border-gray-700">
+              <p className="text-sm font-medium text-white mb-2">To get live data:</p>
+              <ol className="text-xs text-gray-400 list-decimal list-inside space-y-1">
+                <li>Go to <a href="https://dash.cloudflare.com" target="_blank" className="text-blue-400 hover:underline">dash.cloudflare.com</a></li>
+                <li>Workers & Pages → Create Worker</li>
+                <li>Name it <code className="bg-gray-800 px-1 rounded">jet-tracker-api</code></li>
+                <li>Paste this code:</li>
+              </ol>
+              <pre className="mt-2 p-2 bg-gray-900 rounded text-xs text-gray-300 overflow-x-auto">
+{`export default {
+  async fetch(request) {
+    const cors = {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET',
+    };
+    
+    const res = await fetch('https://opensky-network.org/api/states/all', {
+      headers: { 'User-Agent': 'JetTracker/1.0' }
+    });
+    
+    const data = await res.json();
+    
+    return new Response(JSON.stringify(data), {
+      headers: { ...cors, 'Content-Type': 'application/json' }
+    });
+  }
+};`}
+              </pre>
+              <p className="text-xs text-gray-400 mt-2">
+                5. Copy your worker URL (like <code className="bg-gray-800 px-1">https://jet-tracker-api.YOURNAME.workers.dev</code>)
+              </p>
+              <p className="text-xs text-gray-400 mt-1">
+                6. Replace <code className="bg-gray-800 px-1">WORKER_URL</code> in <code className="bg-gray-800 px-1">app/page.tsx</code>
+              </p>
+            </div>
           </div>
         )}
 
         {/* Main Content Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[calc(100vh-280px)] min-h-[600px]">
-          {/* Map */}
           <div className="lg:col-span-2 h-full min-h-[400px]">
             <Map 
               aircraft={filteredAircraft} 
@@ -263,7 +294,6 @@ export default function Home() {
             />
           </div>
 
-          {/* Aircraft List */}
           <div className="h-full overflow-hidden flex flex-col">
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-lg font-semibold text-white">Tracked Aircraft</h2>
@@ -291,33 +321,6 @@ export default function Home() {
                   />
                 ))
               )}
-            </div>
-          </div>
-        </div>
-
-        {/* Footer Info */}
-        <div className="mt-6 pt-6 border-t border-gray-800">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-sm">
-            <div>
-              <h3 className="font-semibold text-white mb-2">Data Source</h3>
-              <p className="text-gray-400">
-                Aircraft positions from OpenSky Network via CORS proxy. Data may be delayed 
-                or unavailable for aircraft outside coverage.
-              </p>
-            </div>
-            <div>
-              <h3 className="font-semibold text-white mb-2">Coverage</h3>
-              <p className="text-gray-400">
-                ADS-B receivers cover most populated areas. Military aircraft may not appear. 
-                Government aircraft often use encrypted transponders.
-              </p>
-            </div>
-            <div>
-              <h3 className="font-semibold text-white mb-2">Disclaimer</h3>
-              <p className="text-gray-400">
-                For entertainment and educational purposes only. Not for navigation or 
-                security use. All data is publicly broadcast by aircraft transponders.
-              </p>
             </div>
           </div>
         </div>
