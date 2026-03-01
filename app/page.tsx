@@ -31,13 +31,17 @@ interface ApiResponse {
 
 // Fetch from our own API (no CORS issues - runs server-side)
 async function fetchAircraftData(category: string): Promise<ApiResponse> {
-  const response = await fetch(`/api/aircraft?category=${category}`);
+  console.log('Fetching from API...');
+  const response = await fetch(`/api/aircraft?category=${category}`, {
+    cache: 'no-store'
+  });
   
-  if (!response.ok) {
-    throw new Error(`API error: ${response.status}`);
-  }
+  console.log('API response status:', response.status);
   
-  return response.json();
+  const data = await response.json();
+  console.log('API response:', data);
+  
+  return data;
 }
 
 // Generate mock data for demonstration
@@ -83,15 +87,23 @@ export default function Home() {
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
+      setError(null);
       
       const data = await fetchAircraftData(selectedCategory);
       
       setAircraft(data.aircraft);
       setTotalTracked(data.totalTracked);
       setLastUpdate(new Date(data.timestamp));
-      setError(null);
-      setUseMockData(false);
+      
+      // Only use mock data if API returned an error flag
+      if (data.source === 'error') {
+        setUseMockData(true);
+        setError(data.error || 'API error');
+      } else {
+        setUseMockData(false);
+      }
     } catch (err) {
+      console.error('Fetch error:', err);
       setError(err instanceof Error ? err.message : 'An error occurred');
       setUseMockData(true);
     } finally {
@@ -155,11 +167,18 @@ export default function Home() {
 
         {/* Error/Message */}
         {useMockData && (
-          <div className="mb-4 p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl flex items-center gap-3">
-            <AlertCircle className="w-5 h-5 text-yellow-500 flex-shrink-0" />
-            <p className="text-sm text-yellow-400">
-              Using demo data. Real-time data available when OpenSky API is accessible.
-            </p>
+          <div className="mb-4 p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl">
+            <div className="flex items-center gap-3 mb-2">
+              <AlertCircle className="w-5 h-5 text-yellow-500 flex-shrink-0" />
+              <p className="text-sm text-yellow-400">
+                Using demo data
+              </p>
+            </div>
+            {error && (
+              <p className="text-xs text-yellow-500/70 ml-8">
+                Error: {error}
+              </p>
+            )}
           </div>
         )}
 
