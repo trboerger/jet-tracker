@@ -8,7 +8,7 @@ import StatsPanel from '@/components/StatsPanel';
 import FilterTabs from '@/components/FilterTabs';
 import { AircraftWithDetails, Aircraft } from '@/types/aircraft';
 import { trackedJets, jetLookup } from '@/lib/aircraft-data';
-import { RefreshCw, AlertCircle } from 'lucide-react';
+import { RefreshCw, AlertCircle, WifiOff } from 'lucide-react';
 
 const Map = dynamic(() => import('@/components/Map'), {
   ssr: false,
@@ -21,8 +21,7 @@ const Map = dynamic(() => import('@/components/Map'), {
 
 type Category = 'all' | 'tech' | 'business' | 'political' | 'government';
 
-// Cloudflare Worker URL - replace with yours once deployed
-// Example: 'https://jet-tracker-api.yourname.workers.dev'
+// Cloudflare Worker URL
 const WORKER_URL = 'https://jet-tracker-api.trboerger.workers.dev';
 
 // Fetch from Cloudflare Worker
@@ -71,45 +70,50 @@ async function fetchFromWorker(icao24List: string[]): Promise<Aircraft[]> {
   }));
 }
 
-// Generate realistic mock data
+// Generate realistic mock data around major airports
 function generateMockData(icao24List: string[]): Aircraft[] {
   const now = Math.floor(Date.now() / 1000);
   
-  // More realistic positions (major airports and common routes)
   const locations = [
-    { lat: 40.7128, lon: -74.0060 }, // NYC
-    { lat: 34.0522, lon: -118.2437 }, // LA
-    { lat: 51.5074, lon: -0.1278 }, // London
-    { lat: 48.8566, lon: 2.3522 }, // Paris
-    { lat: 35.6762, lon: 139.6503 }, // Tokyo
-    { lat: 25.7617, lon: -80.1918 }, // Miami
-    { lat: 39.7392, lon: -104.9903 }, // Denver
-    { lat: 41.9742, lon: -87.9073 }, // Chicago
-    { lat: 37.6213, lon: -122.3790 }, // SF
-    { lat: 30.2672, lon: -97.7431 }, // Austin
+    { lat: 40.7128, lon: -74.0060, name: 'NYC' },
+    { lat: 34.0522, lon: -118.2437, name: 'LA' },
+    { lat: 51.5074, lon: -0.1278, name: 'London' },
+    { lat: 48.8566, lon: 2.3522, name: 'Paris' },
+    { lat: 35.6762, lon: 139.6503, name: 'Tokyo' },
+    { lat: 25.7617, lon: -80.1918, name: 'Miami' },
+    { lat: 39.7392, lon: -104.9903, name: 'Denver' },
+    { lat: 41.9742, lon: -87.9073, name: 'Chicago' },
+    { lat: 37.6213, lon: -122.3790, name: 'SF' },
+    { lat: 30.2672, lon: -97.7431, name: 'Austin' },
+    { lat: 33.7490, lon: -84.3880, name: 'Atlanta' },
+    { lat: 47.6062, lon: -122.3321, name: 'Seattle' },
+    { lat: 42.3601, lon: -71.0589, name: 'Boston' },
+    { lat: 32.7767, lon: -96.7970, name: 'Dallas' },
+    { lat: 36.1699, lon: -115.1398, name: 'Vegas' },
   ];
   
   return icao24List.map((icao24, index) => {
     const loc = locations[index % locations.length];
-    // Add some randomness to position
-    const lat = loc.lat + (Math.random() - 0.5) * 4;
-    const lon = loc.lon + (Math.random() - 0.5) * 4;
+    // Add randomness to make positions look realistic
+    const timeOffset = (Date.now() / 1000) % 3600;
+    const lat = loc.lat + Math.sin(timeOffset / 600 + index) * 3;
+    const lon = loc.lon + Math.cos(timeOffset / 800 + index) * 3;
     
     return {
       icao24: icao24.toLowerCase(),
       callsign: `DEMO${index + 1}`,
       origin_country: "United States",
-      time_position: now - 30,
+      time_position: now - Math.floor(Math.random() * 60),
       last_contact: now,
       longitude: lon,
       latitude: lat,
-      baro_altitude: 35000 + Math.random() * 10000,
-      on_ground: Math.random() > 0.8,
-      velocity: 400 + Math.random() * 100,
+      baro_altitude: 30000 + Math.random() * 15000,
+      on_ground: Math.random() > 0.85,
+      velocity: 350 + Math.random() * 150,
       true_track: Math.random() * 360,
-      vertical_rate: 0,
-      geo_altitude: 35500 + Math.random() * 10000,
-      squawk: "1200",
+      vertical_rate: (Math.random() - 0.5) * 1000,
+      geo_altitude: 31000 + Math.random() * 15000,
+      squawk: `${Math.floor(Math.random() * 7777).toString().padStart(4, '0')}`,
     };
   });
 }
@@ -139,22 +143,17 @@ export default function Home() {
       
       let aircraftData: Aircraft[];
       
-      // Only try worker if URL is configured
-      if (WORKER_URL.includes('yourname')) {
-        // Worker not set up yet - use mock data
+      try {
+        aircraftData = await fetchFromWorker(icao24List);
+        if (aircraftData.length === 0) {
+          throw new Error('No aircraft found - OpenSky may be blocking requests');
+        }
+        setUseMockData(false);
+      } catch (err) {
+        console.warn('Live data unavailable:', err);
         aircraftData = generateMockData(icao24List);
         setUseMockData(true);
-        setError('Add your Cloudflare Worker URL to see live data (see setup guide below)');
-      } else {
-        try {
-          aircraftData = await fetchFromWorker(icao24List);
-          setUseMockData(false);
-        } catch (err) {
-          console.warn('Worker failed, using mock data:', err);
-          aircraftData = generateMockData(icao24List);
-          setUseMockData(true);
-          setError('Worker unavailable - showing demo positions');
-        }
+        setError('OpenSky is blocking Cloudflare Workers. Using demo positions around major airports.');
       }
       
       // Merge with jet info
@@ -230,56 +229,35 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Error/Message */}
+        {/* Demo Data Notice */}
         {useMockData && (
           <div className="mb-4 p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl">
-            <div className="flex items-center gap-3 mb-2">
-              <AlertCircle className="w-5 h-5 text-yellow-500 flex-shrink-0" />
-              <p className="text-sm text-yellow-400">
-                Using demo data
-              </p>
-            </div>
-            {error && (
-              <p className="text-xs text-yellow-500/70 ml-8">
-                {error}
-              </p>
-            )}
-            
-            {/* Setup Guide */}
-            <div className="mt-3 ml-8 p-3 bg-jet-card rounded-lg border border-gray-700">
-              <p className="text-sm font-medium text-white mb-2">To get live data:</p>
-              <ol className="text-xs text-gray-400 list-decimal list-inside space-y-1">
-                <li>Go to <a href="https://dash.cloudflare.com" target="_blank" className="text-blue-400 hover:underline">dash.cloudflare.com</a></li>
-                <li>Workers & Pages → Create Worker</li>
-                <li>Name it <code className="bg-gray-800 px-1 rounded">jet-tracker-api</code></li>
-                <li>Paste this code:</li>
-              </ol>
-              <pre className="mt-2 p-2 bg-gray-900 rounded text-xs text-gray-300 overflow-x-auto">
-{`export default {
-  async fetch(request) {
-    const cors = {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET',
-    };
-    
-    const res = await fetch('https://opensky-network.org/api/states/all', {
-      headers: { 'User-Agent': 'JetTracker/1.0' }
-    });
-    
-    const data = await res.json();
-    
-    return new Response(JSON.stringify(data), {
-      headers: { ...cors, 'Content-Type': 'application/json' }
-    });
-  }
-};`}
-              </pre>
-              <p className="text-xs text-gray-400 mt-2">
-                5. Copy your worker URL (like <code className="bg-gray-800 px-1">https://jet-tracker-api.YOURNAME.workers.dev</code>)
-              </p>
-              <p className="text-xs text-gray-400 mt-1">
-                6. Replace <code className="bg-gray-800 px-1">WORKER_URL</code> in <code className="bg-gray-800 px-1">app/page.tsx</code>
-              </p>
+            <div className="flex items-start gap-3">
+              <WifiOff className="w-5 h-5 text-yellow-500 flex-shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <p className="text-sm text-yellow-400 font-medium">
+                  Using demo data - OpenSky is blocking Cloudflare Workers
+                </p>
+                {error && (
+                  <p className="text-xs text-yellow-500/70 mt-1">
+                    {error}
+                  </p>
+                )}
+                <p className="text-xs text-gray-400 mt-2">
+                  Aircraft are shown in realistic positions around major airports (NYC, LA, London, Tokyo, etc.) for demonstration purposes.
+                </p>
+                
+                <div className="mt-3 flex gap-2">
+                  <a 
+                    href="https://opensky-network.org"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-400 px-3 py-1.5 rounded transition-colors"
+                  >
+                    Check OpenSky Status
+                  </a>
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -307,8 +285,8 @@ export default function Home() {
                 <div className="flex flex-col items-center justify-center h-64 text-gray-500">
                   <RefreshCw className="w-12 h-12 mb-4 opacity-50" />
                   <p className="text-center">
-                    No aircraft visible in this category<br />
-                    <span className="text-sm">They may be out of ADS-B range</span>
+                    No aircraft visible<br />
+                    <span className="text-sm">Try refreshing or select a different category</span>
                   </p>
                 </div>
               ) : (
@@ -321,6 +299,30 @@ export default function Home() {
                   />
                 ))
               )}
+            </div>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="mt-6 pt-6 border-t border-gray-800">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-sm">
+            <div>
+              <h3 className="font-semibold text-white mb-2">About This Dashboard</h3>
+              <p className="text-gray-400">
+                Tracks 40+ high-profile aircraft including tech billionaires, business leaders, and government planes using ADS-B transponder data.
+              </p>
+            </div>
+            <div>
+              <h3 className="font-semibold text-white mb-2">Data Source</h3>
+              <p className="text-gray-400">
+                Normally fetches from OpenSky Network. Currently showing demo positions due to API restrictions on serverless functions.
+              </p>
+            </div>
+            <div>
+              <h3 className="font-semibold text-white mb-2">Disclaimer</h3>
+              <p className="text-gray-400">
+                For entertainment purposes only. Not for navigation or operational use. Aircraft positions are simulated when live data is unavailable.
+              </p>
             </div>
           </div>
         </div>
