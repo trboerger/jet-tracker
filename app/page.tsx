@@ -7,6 +7,7 @@ import AircraftCard from '@/components/AircraftCard';
 import StatsPanel from '@/components/StatsPanel';
 import FilterTabs from '@/components/FilterTabs';
 import { AircraftWithDetails, Aircraft } from '@/types/aircraft';
+import { trackedJets, jetLookup } from '@/lib/aircraft-data';
 import { RefreshCw, AlertCircle } from 'lucide-react';
 
 // Dynamic import for Map to avoid SSR issues with Leaflet
@@ -27,25 +28,58 @@ interface ApiResponse {
   totalTracked: number;
   visible: number;
   source?: string;
-  error?: string;
 }
 
-// Fetch from our own API (no CORS issues - runs server-side)
-async function fetchAircraftData(category: string): Promise<ApiResponse> {
-  console.log('Fetching from API...');
-  const response = await fetch(`/api/aircraft?category=${category}`, {
-    cache: 'no-store'
-  });
+// Fetch from OpenSky via CORS proxy
+async function fetchOpenSkyData(icao24List: string[]): Promise<Aircraft[]> {
+  const icaoSet = new Set(icao24List.map(i => i.toLowerCase()));
   
-  console.log('API response status:', response.status);
+  // Use a CORS proxy to fetch OpenSky data
+  const targetUrl = 'https://opensky-network.org/api/states/all';
+  const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`;
   
-  const data = await response.json();
-  console.log('API response:', data);
+  const response = await fetch(proxyUrl);
   
-  return data;
+  if (!response.ok) {
+    throw new Error(`Proxy error: ${response.status}`);
+  }
+  
+  const wrapped = await response.json();
+  
+  if (!wrapped.contents) {
+    throw new Error('Empty response from proxy');
+  }
+  
+  const data = JSON.parse(wrapped.contents);
+  
+  if (!data.states || !Array.isArray(data.states)) {
+    return [];
+  }
+  
+  // Filter to tracked aircraft
+  const filtered = data.states.filter((state: any[]) => 
+    icaoSet.has(state[0].toLowerCase())
+  );
+  
+  return filtered.map((state: any[]) => ({
+    icao24: state[0],
+    callsign: state[1]?.trim() || null,
+    origin_country: state[2],
+    time_position: state[3],
+    last_contact: state[4],
+    longitude: state[5],
+    latitude: state[6],
+    baro_altitude: state[7],
+    on_ground: state[8],
+    velocity: state[9],
+    true_track: state[10],
+    vertical_rate: state[11],
+    geo_altitude: state[13],
+    squawk: state[14],
+  }));
 }
 
-// Generate mock data for demonstration
+// Generate mock data
 function generateMockData(icao24List: string[]): Aircraft[] {
   const now = Math.floor(Date.now() / 1000);
   
@@ -57,7 +91,7 @@ function generateMockData(icao24List: string[]): Aircraft[] {
     
     return {
       icao24: icao24.toLowerCase(),
-      callsign: `MOCK${index + 1}`,
+      callsign: `DEMO${index + 1}`,
       origin_country: "United States",
       time_position: now - 30,
       last_contact: now,
@@ -82,35 +116,52 @@ export default function Home() {
   const [selectedCategory, setSelectedCategory] = useState<Category>('all');
   const [selectedIcao, setSelectedIcao] = useState<string | null>(null);
   const [useMockData, setUseMockData] = useState(false);
-
   const [totalTracked, setTotalTracked] = useState(0);
+
+  const jetsToTrack = useMemo(() => {
+    if (selectedCategory === 'all') return trackedJets;
+    return trackedJets.filter(jet => jet.category === selectedCategory);
+  }, [selectedCategory]);
 
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
       
-      const data = await fetchAircraftData(selectedCategory);
+      const icao24List = jetsToTrack.map(jet => jet.icao24.toLowerCase());
+      setTotalTracked(jetsToTrack.length);
       
-      setAircraft(data.aircraft);
-      setTotalTracked(data.totalTracked);
-      setLastUpdate(new Date(data.timestamp));
+      let aircraftData: Aircraft[];
       
-      // Only use mock data if API returned an error flag
-      if (data.source === 'error') {
-        setUseMockData(true);
-        setError(data.error || 'API error');
-      } else {
+      try {
+        // Try to fetch real data
+        aircraftData = await fetchOpenSkyData(icao24List);
         setUseMockData(false);
+      } catch (err) {
+        console.warn('OpenSky fetch failed, using mock data:', err);
+        aircraftData = generateMockData(icao24List);
+        setUseMockData(true);
+        setError('Live data unavailable - showing demo positions');
       }
+      
+      // Merge with jet info
+      const enrichedData: AircraftWithDetails[] = aircraftData
+        .map(ac => {
+          const jetInfo = jetLookup.get(ac.icao24.toLowerCase());
+          if (!jetInfo) return null;
+          return { ...ac, jetInfo };
+        })
+        .filter((ac): ac is AircraftWithDetails => ac !== null);
+      
+      setAircraft(enrichedData);
+      setLastUpdate(new Date());
     } catch (err) {
       console.error('Fetch error:', err);
-      setError(err instanceof Error ? err.message : 'An error occurred');
-      setUseMockData(true);
+      setError('Failed to load aircraft data');
     } finally {
       setLoading(false);
     }
-  }, [selectedCategory]);
+  }, [jetsToTrack]);
 
   // Initial fetch and interval
   useEffect(() => {
@@ -177,7 +228,7 @@ export default function Home() {
             </div>
             {error && (
               <p className="text-xs text-yellow-500/70 ml-8">
-                Error: {error}
+                {error}
               </p>
             )}
           </div>
@@ -232,15 +283,15 @@ export default function Home() {
             <div>
               <h3 className="font-semibold text-white mb-2">Data Source</h3>
               <p className="text-gray-400">
-                Aircraft positions provided by the OpenSky Network. Data may be delayed 
-                or unavailable for aircraft using encrypted transponders or outside coverage.
+                Aircraft positions from OpenSky Network via CORS proxy. Data may be delayed 
+                or unavailable for aircraft outside coverage.
               </p>
             </div>
             <div>
               <h3 className="font-semibold text-white mb-2">Coverage</h3>
               <p className="text-gray-400">
                 ADS-B receivers cover most populated areas. Military aircraft may not appear. 
-                Government aircraft often use blockable transponders.
+                Government aircraft often use encrypted transponders.
               </p>
             </div>
             <div>
