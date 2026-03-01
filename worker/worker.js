@@ -1,33 +1,42 @@
-// Cloudflare Worker - Jet Tracker API Proxy
-// This fetches OpenSky data without CORS issues
-
 export default {
   async fetch(request, env) {
-    // CORS headers for browser access
     const corsHeaders = {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type',
     };
 
-    // Handle preflight requests
     if (request.method === 'OPTIONS') {
       return new Response(null, { headers: corsHeaders });
     }
 
     try {
-      // Fetch from OpenSky
-      const openSkyUrl = 'https://opensky-network.org/api/states/all';
+      // Try to fetch from OpenSky
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8000);
       
-      const response = await fetch(openSkyUrl, {
+      const response = await fetch('https://opensky-network.org/api/states/all', {
+        method: 'GET',
         headers: {
-          'User-Agent': 'JetTracker/1.0 (Research Project)',
-          'Accept': 'application/json'
-        }
+          'User-Agent': 'JetTracker/1.0',
+          'Accept': 'application/json',
+        },
+        signal: controller.signal,
       });
+      
+      clearTimeout(timeout);
 
       if (!response.ok) {
-        throw new Error(`OpenSky error: ${response.status}`);
+        return new Response(JSON.stringify({ 
+          error: `OpenSky returned ${response.status}`,
+          states: []
+        }), {
+          status: 200,
+          headers: {
+            ...corsHeaders,
+            'Content-Type': 'application/json',
+          },
+        });
       }
 
       const data = await response.json();
@@ -36,15 +45,15 @@ export default {
         headers: {
           ...corsHeaders,
           'Content-Type': 'application/json',
-          'Cache-Control': 'max-age=10' // Cache for 10 seconds
+          'Cache-Control': 'max-age=5',
         },
       });
     } catch (error) {
       return new Response(JSON.stringify({ 
-        error: error.message,
+        error: error.message || 'Worker error',
         states: []
       }), {
-        status: 500,
+        status: 200,
         headers: {
           ...corsHeaders,
           'Content-Type': 'application/json',

@@ -23,7 +23,7 @@ type Category = 'all' | 'tech' | 'business' | 'political' | 'government';
 
 // Cloudflare Worker URL - replace with yours once deployed
 // Example: 'https://jet-tracker-api.yourname.workers.dev'
-const WORKER_URL = 'https://jet-tracker-api.yourname.workers.dev';
+const WORKER_URL = 'https://jet-tracker-api.trboerger.workers.dev';
 
 // Fetch from Cloudflare Worker
 async function fetchFromWorker(icao24List: string[]): Promise<Aircraft[]> {
