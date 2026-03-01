@@ -24,35 +24,57 @@ type Category = 'all' | 'tech' | 'business' | 'political' | 'government';
 
 // OpenSky API fetch with CORS proxy
 async function fetchOpenSkyData(icao24List: string[]): Promise<Aircraft[]> {
-  const icaoString = icao24List.join(',');
-  const targetUrl = `https://opensky-network.org/api/states/all?icao24=${icaoString}`;
+  // Create a set for faster lookups
+  const icaoSet = new Set(icao24List.map(i => i.toLowerCase()));
   
-  // Try multiple CORS proxies in case one fails
+  // Try fetching all states and filter client-side (shorter URL)
+  const targetUrl = 'https://opensky-network.org/api/states/all';
+  
+  // Try multiple CORS proxies
   const corsProxies = [
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`,
-    `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`,
+    `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`,
+    `https://api.codetabs.com/v1/proxy?quest=${targetUrl}`,
   ];
   
   for (const proxyUrl of corsProxies) {
     try {
-      const response = await fetch(proxyUrl, { 
-        headers: {
-          'User-Agent': 'JetTracker/1.0'
-        }
-      });
+      console.log('Trying proxy:', proxyUrl);
+      const response = await fetch(proxyUrl);
       
       if (!response.ok) {
-        console.warn(`Proxy failed: ${proxyUrl}`);
+        console.warn(`Proxy failed with status: ${response.status}`);
         continue;
       }
       
-      const data = await response.json();
+      let data;
       
-      if (!data.states) {
+      // Handle different proxy response formats
+      if (proxyUrl.includes('allorigins.win')) {
+        const wrapped = await response.json();
+        if (!wrapped.contents) {
+          console.warn('AllOrigins: no contents');
+          continue;
+        }
+        data = JSON.parse(wrapped.contents);
+      } else {
+        data = await response.json();
+      }
+      
+      if (!data.states || !Array.isArray(data.states)) {
+        console.warn('OpenSky returned no states');
         return [];
       }
       
-      return data.states.map((state: any[]) => ({
+      console.log(`OpenSky returned ${data.states.length} total aircraft`);
+      
+      // Filter to our tracked aircraft
+      const filtered = data.states.filter((state: any[]) => 
+        icaoSet.has(state[0].toLowerCase())
+      );
+      
+      console.log(`Found ${filtered.length} tracked aircraft`);
+      
+      return filtered.map((state: any[]) => ({
         icao24: state[0],
         callsign: state[1]?.trim() || null,
         origin_country: state[2],
@@ -69,12 +91,11 @@ async function fetchOpenSkyData(icao24List: string[]): Promise<Aircraft[]> {
         squawk: state[14],
       }));
     } catch (error) {
-      console.warn(`Proxy error for ${proxyUrl}:`, error);
+      console.warn(`Proxy error:`, error);
       continue;
     }
   }
   
-  // All proxies failed
   throw new Error('All CORS proxies failed');
 }
 
