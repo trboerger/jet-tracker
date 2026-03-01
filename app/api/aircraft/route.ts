@@ -5,6 +5,35 @@ import { Aircraft } from '@/types/aircraft';
 // Force dynamic to avoid caching
 export const dynamic = 'force-dynamic';
 
+// Retry helper
+async function fetchWithRetry(url: string, options: RequestInit, maxRetries = 3): Promise<Response> {
+  let lastError;
+  
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      console.log(`Fetch attempt ${i + 1}/${maxRetries}...`);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+      
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal
+      });
+      
+      clearTimeout(timeout);
+      return response;
+    } catch (error) {
+      console.warn(`Attempt ${i + 1} failed:`, error);
+      lastError = error;
+      if (i < maxRetries - 1) {
+        await new Promise(r => setTimeout(r, 1000 * (i + 1))); // Exponential backoff
+      }
+    }
+  }
+  
+  throw lastError;
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const category = searchParams.get('category') || 'all';
@@ -23,15 +52,14 @@ export async function GET(request: Request) {
   try {
     // Fetch from OpenSky - get all states and filter
     const openSkyUrl = 'https://opensky-network.org/api/states/all';
-    console.log('Fetching from OpenSky...');
+    console.log('Fetching from OpenSky with retries...');
     
-    const response = await fetch(openSkyUrl, {
+    const response = await fetchWithRetry(openSkyUrl, {
       headers: {
-        'User-Agent': 'JetTracker/1.0'
-      },
-      // Don't cache this request
-      cache: 'no-store'
-    });
+        'User-Agent': 'JetTracker/1.0 (Research Project)',
+        'Accept': 'application/json'
+      }
+    }, 3);
     
     console.log(`OpenSky response status: ${response.status}`);
     
@@ -103,6 +131,6 @@ export async function GET(request: Request) {
       visible: 0,
       source: 'error',
       error: error instanceof Error ? error.message : 'Unknown error'
-    }, { status: 200 }); // Return 200 so client gets the error message
+    }, { status: 200 });
   }
 }
