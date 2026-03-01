@@ -22,48 +22,60 @@ const Map = dynamic(() => import('@/components/Map'), {
 
 type Category = 'all' | 'tech' | 'business' | 'political' | 'government';
 
-// OpenSky API fetch
+// OpenSky API fetch with CORS proxy
 async function fetchOpenSkyData(icao24List: string[]): Promise<Aircraft[]> {
   const icaoString = icao24List.join(',');
-  const url = `https://opensky-network.org/api/states/all?icao24=${icaoString}`;
+  const targetUrl = `https://opensky-network.org/api/states/all?icao24=${icaoString}`;
   
-  try {
-    const response = await fetch(url, { 
-      headers: {
-        'User-Agent': 'JetTracker/1.0'
+  // Try multiple CORS proxies in case one fails
+  const corsProxies = [
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`,
+    `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`,
+  ];
+  
+  for (const proxyUrl of corsProxies) {
+    try {
+      const response = await fetch(proxyUrl, { 
+        headers: {
+          'User-Agent': 'JetTracker/1.0'
+        }
+      });
+      
+      if (!response.ok) {
+        console.warn(`Proxy failed: ${proxyUrl}`);
+        continue;
       }
-    });
-    
-    if (!response.ok) {
-      throw new Error(`OpenSky API error: ${response.status}`);
+      
+      const data = await response.json();
+      
+      if (!data.states) {
+        return [];
+      }
+      
+      return data.states.map((state: any[]) => ({
+        icao24: state[0],
+        callsign: state[1]?.trim() || null,
+        origin_country: state[2],
+        time_position: state[3],
+        last_contact: state[4],
+        longitude: state[5],
+        latitude: state[6],
+        baro_altitude: state[7],
+        on_ground: state[8],
+        velocity: state[9],
+        true_track: state[10],
+        vertical_rate: state[11],
+        geo_altitude: state[13],
+        squawk: state[14],
+      }));
+    } catch (error) {
+      console.warn(`Proxy error for ${proxyUrl}:`, error);
+      continue;
     }
-    
-    const data = await response.json();
-    
-    if (!data.states) {
-      return [];
-    }
-    
-    return data.states.map((state: any[]) => ({
-      icao24: state[0],
-      callsign: state[1]?.trim() || null,
-      origin_country: state[2],
-      time_position: state[3],
-      last_contact: state[4],
-      longitude: state[5],
-      latitude: state[6],
-      baro_altitude: state[7],
-      on_ground: state[8],
-      velocity: state[9],
-      true_track: state[10],
-      vertical_rate: state[11],
-      geo_altitude: state[13],
-      squawk: state[14],
-    }));
-  } catch (error) {
-    console.error('Error fetching OpenSky data:', error);
-    return [];
   }
+  
+  // All proxies failed
+  throw new Error('All CORS proxies failed');
 }
 
 // Generate mock data for demonstration
